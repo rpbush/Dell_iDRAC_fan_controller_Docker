@@ -62,7 +62,7 @@ docker run -d \
   -e CPU_TEMPERATURE_TRESHOLD=<decimal temperature treshold> \
   -e CHECK_INTERVAL=<seconds between each check> \
   --device=/dev/ipmi0:/dev/ipmi0:rw \
-  tigerblue77/dell_idrac_fan_controller:latest
+  rpbush/dell_idrac_fan_controller_docker
 ```
 
 2. with LAN iDRAC:
@@ -77,7 +77,7 @@ docker run -d \
   -e FAN_SPEED=<decimal or hexadecimal fan speed> \
   -e CPU_TEMPERATURE_TRESHOLD=<decimal temperature treshold> \
   -e CHECK_INTERVAL=<seconds between each check> \
-  tigerblue77/dell_idrac_fan_controller:latest
+  rpbush/dell_idrac_fan_controller_docker
 ```
 
 `docker-compose.yml` examples:
