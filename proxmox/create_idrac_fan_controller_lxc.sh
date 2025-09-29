@@ -264,10 +264,11 @@ main() {
   echo "Using iDRAC username: $IDRAC_USERNAME"
   
   echo "DEBUG: About to prompt for iDRAC password"
-  read -s -p "Enter iDRAC password: " IDRAC_PASSWORD
+  printf "Enter iDRAC password: "
+  read -s IDRAC_PASSWORD
   echo ""
   # Clean any leading/trailing whitespace and newlines
-  IDRAC_PASSWORD=$(echo "$IDRAC_PASSWORD" | tr -d '\n\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')
+  IDRAC_PASSWORD=$(echo -n "$IDRAC_PASSWORD" | tr -d '\n\r')
   echo "DEBUG: iDRAC_PASSWORD length: ${#IDRAC_PASSWORD}"
   echo "DEBUG: iDRAC_PASSWORD content: '${IDRAC_PASSWORD}'"
 
