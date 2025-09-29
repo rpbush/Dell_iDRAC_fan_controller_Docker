@@ -53,23 +53,20 @@ read_with_prompt() {
   printf -v "$__outvar" "%s" "$input"
 }
 
-list_storages_by_content() {
-  local pattern=$1; shift
-  # Output: one storage id per line whose content column contains the pattern
-  # pvesm status output includes a header; search the whole line for content keywords
-  pvesm status 2>/dev/null | awk -v pat="$pattern" 'NR>1 && $0 ~ pat {print $1}'
+list_all_storages() {
+  # Output: one storage id per line
+  pvesm status 2>/dev/null | awk 'NR>1 {print $1}'
 }
 
 select_storage_menu() {
   local var_name=$1; shift
   local title=$1; shift
-  local pattern=$1; shift
   local detected_default=$1; shift
 
   local options idx choice
-  mapfile -t options < <(list_storages_by_content "$pattern")
+  mapfile -t options < <(list_all_storages)
   if [[ ${#options[@]} -eq 0 ]]; then
-    echo "No storages matching pattern '$pattern' found. Falling back to: $detected_default"
+    echo "No storages found. Falling back to: $detected_default"
     printf -v "$var_name" "%s" "$detected_default"
     return 0
   fi
@@ -92,7 +89,7 @@ prompt_var() {
   local var_name=$1; shift
   local prompt_text=$1; shift
   local default_value=${1:-}
-  local input
+  local input=""
   # If variable is already set and non-empty, do nothing
   if [[ -n "${!var_name+x}" && -n "${!var_name}" ]]; then
     return 0
@@ -109,7 +106,7 @@ prompt_var() {
 prompt_secret() {
   local var_name=$1; shift
   local prompt_text=$1; shift
-  local input
+  local input=""
   # If variable is already set and non-empty, do nothing
   if [[ -n "${!var_name+x}" && -n "${!var_name}" ]]; then
     return 0
@@ -264,14 +261,9 @@ main() {
   # Container basics
   prompt_var VMID "Enter container VMID" "902"
   prompt_var HOSTNAME "Enter container hostname" "idrac-fanctl"
-  # Detect storages and offer menus
-  local detected_tmpl detected_rootfs
-  detected_tmpl=$(list_storages_by_content 'vztmpl' | head -1)
-  detected_rootfs=$(list_storages_by_content 'rootdir|container' | head -1)
-  if [[ -z "$detected_tmpl" ]]; then detected_tmpl="local"; fi
-  if [[ -z "$detected_rootfs" ]]; then detected_rootfs="local-lvm"; fi
-  select_storage_menu TEMPLATE_STORAGE "Select template storage (supports vztmpl):" 'vztmpl' "$detected_tmpl"
-  select_storage_menu ROOTFS_STORAGE "Select rootfs storage (supports container/rootdir):" 'rootdir|container' "$detected_rootfs"
+  # Prompt for storages with menu
+  select_storage_menu TEMPLATE_STORAGE "Select template storage:" "local"
+  select_storage_menu ROOTFS_STORAGE "Select rootfs storage:" "local-lvm"
   assign_default BRIDGE "vmbr0" "network bridge"
   prompt_var CT_PASSWORD "Enter container root password" "changeme"
   assign_default CPU_CORES "1" "CPU cores"
