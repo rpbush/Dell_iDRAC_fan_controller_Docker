@@ -43,7 +43,7 @@ prompt_input() {
 prompt_secret() {
   local prompt_message="$1"
   local user_input
-  read -s -p "$prompt_message: " user_input
+  read -s -p "$prompt_message: " user_input || true
   echo ""
   echo "$user_input"
 }
@@ -77,15 +77,6 @@ select_storage_menu() {
     choice=1
   fi
   printf -v "$var_name" "%s" "${options[$((choice-1))]}"
-}
-
-
-prompt_secret() {
-  local prompt_message="$1"
-  local user_input
-  read -s -p "$prompt_message: " user_input
-  echo ""
-  echo "$user_input"
 }
 
 maybe_test_redfish() {
