@@ -1,19 +1,102 @@
 #!/bin/bash
 
 # Define global functions
+# Control method selection: ipmi | redfish | auto (try ipmi then redfish)
+CONTROL_METHOD=${CONTROL_METHOD:-auto}
+
+# Helper: Redfish POST with multiple fallback endpoints/payloads
+redfish_post () {
+  local endpoint
+  local payload="$2"
+  local -a endpoints=(
+    "https://$IDRAC_HOST/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellLCService/Actions/DellLCService.$1"
+    "https://$IDRAC_HOST/redfish/v1/Dell/Managers/iDRAC.Embedded.1/DellLCService/Actions/DellLCService.$1"
+  )
+  for endpoint in "${endpoints[@]}"; do
+    curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
+      -H "Content-Type: application/json" \
+      -X POST "$endpoint" -d "$payload" -o /dev/null -w "%{http_code}" | grep -qE '^(200|201|202|204)$' && return 0
+  done
+  return 1
+}
+
+# Redfish: enable manual control and set speed
+redfish_apply_user_profile () {
+  # Try to enable manual override (best-effort; ignore failure if not required on model)
+  redfish_post SetFanControlOverride '{"Enable": true}' || true
+
+  # Try multiple payload shapes for SetFanSpeed across firmware variants
+  if redfish_post SetFanSpeed "{\"FanSpeed\": $DECIMAL_FAN_SPEED}"; then
+    CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"
+    return 0
+  fi
+  if redfish_post SetFanSpeed "{\"Percent\": $DECIMAL_FAN_SPEED}"; then
+    CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"
+    return 0
+  fi
+  if redfish_post SetFanSpeed "{\"Target\": \"All\", \"Percent\": $DECIMAL_FAN_SPEED}"; then
+    CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"
+    return 0
+  fi
+  return 1
+}
+
+# Redfish: restore iDRAC automatic control
+redfish_apply_dell_profile () {
+  # Try explicit override disable
+  if redfish_post SetFanControlOverride '{"Enable": false}'; then
+    CURRENT_FAN_CONTROL_PROFILE="Dell default dynamic fan control profile"
+    return 0
+  fi
+  # Some firmwares accept a special value to clear manual speed
+  if redfish_post SetFanSpeed '{"FanSpeed": null}'; then
+    CURRENT_FAN_CONTROL_PROFILE="Dell default dynamic fan control profile"
+    return 0
+  fi
+  return 1
+}
 # This function applies Dell's default dynamic fan control profile
 apply_Dell_profile () {
-  # Use ipmitool to send the raw command to set fan control to Dell default
-  ipmitool -I $LOGIN_STRING raw 0x30 0x30 0x01 0x01 > /dev/null
-  CURRENT_FAN_CONTROL_PROFILE="Dell default dynamic fan control profile"
+  case "$CONTROL_METHOD" in
+    ipmi)
+      ipmitool -I $LOGIN_STRING raw 0x30 0x30 0x01 0x01 > /dev/null && {
+        CURRENT_FAN_CONTROL_PROFILE="Dell default dynamic fan control profile"; return 0; }
+      return 1
+      ;;
+    redfish)
+      redfish_apply_dell_profile
+      return $?
+      ;;
+    auto|*)
+      ipmitool -I $LOGIN_STRING raw 0x30 0x30 0x01 0x01 > /dev/null && {
+        CURRENT_FAN_CONTROL_PROFILE="Dell default dynamic fan control profile"; return 0; }
+      redfish_apply_dell_profile
+      return $?
+      ;;
+  esac
 }
 
 # This function applies a user-specified static fan control profile
 apply_user_profile () {
-  # Use ipmitool to send the raw command to set fan control to user-specified value
-  ipmitool -I $LOGIN_STRING raw 0x30 0x30 0x01 0x00 > /dev/null
-  ipmitool -I $LOGIN_STRING raw 0x30 0x30 0x02 0xff $HEXADECIMAL_FAN_SPEED > /dev/null
-  CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"
+  case "$CONTROL_METHOD" in
+    ipmi)
+      ipmitool -I $LOGIN_STRING raw 0x30 0x30 0x01 0x00 > /dev/null && \
+      ipmitool -I $LOGIN_STRING raw 0x30 0x30 0x02 0xff $HEXADECIMAL_FAN_SPEED > /dev/null && {
+        CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"; return 0; }
+      return 1
+      ;;
+    redfish)
+      redfish_apply_user_profile
+      return $?
+      ;;
+    auto|*)
+      ipmitool -I $LOGIN_STRING raw 0x30 0x30 0x01 0x00 > /dev/null && \
+      ipmitool -I $LOGIN_STRING raw 0x30 0x30 0x02 0xff $HEXADECIMAL_FAN_SPEED > /dev/null && {
+        CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"; return 0; }
+      redfish_apply_user_profile
+      return $?
+      ;;
+  esac
 }
 
 # Prepare traps in case of container exit
@@ -39,15 +122,16 @@ else
 fi
 
 # Log main informations given to the container
-echo "Idrac/IPMI host: $IDRAC_HOST"
+echo "Idrac host: $IDRAC_HOST"
+echo "Control method: $CONTROL_METHOD"
 
 # Check if the Idrac host is set to 'local', and set the LOGIN_STRING accordingly
 if [[ $IDRAC_HOST == "local" ]]
 then
   LOGIN_STRING='open'
 else
-  echo "Idrac/IPMI username: $IDRAC_USERNAME"
-  echo "Idrac/IPMI password: $IDRAC_PASSWORD"
+  echo "Idrac username: $IDRAC_USERNAME"
+  echo "Idrac password: $IDRAC_PASSWORD"
   LOGIN_STRING="lanplus -H $IDRAC_HOST -U $IDRAC_USERNAME -P $IDRAC_PASSWORD"
 fi
 

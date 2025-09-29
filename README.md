@@ -10,6 +10,7 @@ https://github.com/rpbush/Dell_iDRAC_fan_controller_Docker
     <li><a href="#container-console-log-example">Container console log example</a></li>
     <li><a href="#usage">Usage</a></li>
     <li><a href="#parameters">Parameters</a></li>
+    <li><a href="#proxmox-lxc">Proxmox LXC (Proxmox VE 9)</a></li>
     <li><a href="#contributing">Contributing</a></li>
   </ol>
 </details>
@@ -58,6 +59,7 @@ docker run -d \
   --name Dell_iDRAC_fan_controller \
   --restart=unless-stopped \
   -e IDRAC_HOST=local \
+  -e CONTROL_METHOD=auto \
   -e FAN_SPEED=<decimal or hexadecimal fan speed> \
   -e CPU_TEMPERATURE_TRESHOLD=<decimal temperature treshold> \
   -e CHECK_INTERVAL=<seconds between each check> \
@@ -74,6 +76,7 @@ docker run -d \
   -e IDRAC_HOST=<iDRAC IP address> \
   -e IDRAC_USERNAME=<iDRAC username> \
   -e IDRAC_PASSWORD=<iDRAC password> \
+  -e CONTROL_METHOD=auto \
   -e FAN_SPEED=<decimal or hexadecimal fan speed> \
   -e CPU_TEMPERATURE_TRESHOLD=<decimal temperature treshold> \
   -e CHECK_INTERVAL=<seconds between each check> \
@@ -94,6 +97,7 @@ services:
     restart: unless-stopped
     environment:
       - IDRAC_HOST=local
+      - CONTROL_METHOD=auto
       - FAN_SPEED=<decimal or hexadecimal fan speed>
       - CPU_TEMPERATURE_TRESHOLD=<decimal temperature treshold>
       - CHECK_INTERVAL=<seconds between each check>
@@ -115,6 +119,7 @@ services:
       - IDRAC_HOST=<iDRAC IP address>
       - IDRAC_USERNAME=<iDRAC username>
       - IDRAC_PASSWORD=<iDRAC password>
+      - CONTROL_METHOD=auto
       - FAN_SPEED=<decimal or hexadecimal fan speed>
       - CPU_TEMPERATURE_TRESHOLD=<decimal temperature treshold>
       - CHECK_INTERVAL=<seconds between each check>
@@ -130,9 +135,36 @@ All parameters are optional as they have default values (including default iDRAC
 - `IDRAC_HOST` parameter can be set to "local" or to your distant iDRAC's IP address. **Default** value is "local".
 - `IDRAC_USERNAME` parameter is only necessary if you're adressing a distant iDRAC. **Default** value is "root".
 - `IDRAC_PASSWORD` parameter is only necessary if you're adressing a distant iDRAC. **Default** value is "calvin".
+- `CONTROL_METHOD` selects control API: `ipmi`, `redfish`, or `auto`. `auto` first tries legacy IPMI raw commands and falls back to Dell OEM Redfish actions compatible with iDRAC9 v7 (e.g., R740xd on 7.00.00.182). **Default** value is `auto`.
 - `FAN_SPEED` parameter can be set as a decimal (from 0 to 100%) or hexadecimaladecimal value (from 0x00 to 0x64) you want to set the fans to. **Default** value is 5(%).
 - `CPU_TEMPERATURE_TRESHOLD` parameter is the T°junction (junction temperature) threshold beyond which the Dell fan mode defined in your BIOS will become active again (to protect the server hardware against overheat). **Default** value is 50(°C).
 - `CHECK_INTERVAL` parameter is the time (in seconds) between each temperature check and potential profile change. **Default** value is 60(s).
+
+### Notes for iDRAC9 v7.00.00.182 (R740xd)
+- Newer iDRAC9 firmwares may restrict IPMI raw fan control (0x30 0x30...). When `CONTROL_METHOD=auto`, the script will transparently use Redfish OEM actions if IPMI fails.
+- Ensure Redfish is reachable and credentials are set (`IDRAC_HOST`, `IDRAC_USERNAME`, `IDRAC_PASSWORD`). The container includes `curl` and `jq` for Redfish interactions.
+
+## Proxmox LXC
+
+Tested on Proxmox VE 9. Run the provisioning script on the Proxmox host as root to create a Debian 12 LXC containing the controller as a systemd service.
+
+1) Review and set variables then run:
+
+```bash
+cd /path/to/Dell_iDRAC_fan_controller_Docker
+bash proxmox/create_idrac_fan_controller_lxc.sh \
+  VMID=902 HOSTNAME=idrac-fanctl STORAGE=local-lvm BRIDGE=vmbr0 \
+  IDRAC_HOST=<idrac-ip> IDRAC_USERNAME=<user> IDRAC_PASSWORD=<pass> \
+  CONTROL_METHOD=auto FAN_SPEED=20 CPU_TEMPERATURE_TRESHOLD=60 CHECK_INTERVAL=30
+```
+
+The script will:
+- Download a Debian 12 standard template if needed
+- Create an unprivileged LXC with nesting enabled
+- Install `ipmitool`, `curl`, `jq`
+- Push `Dell_iDRAC_fan_controller.sh` and register a systemd service `idrac-fan-controller`
+
+Optional: To map host `/dev/ipmi0` into the container for local IPMI access, rerun with `MAP_IPMI_DEVICE=1` and ensure the host has IPMI kernel modules loaded. Redfish over network works without device mapping.
 
 <p align="right">(<a href="#top">back to top</a>)</p>
 
