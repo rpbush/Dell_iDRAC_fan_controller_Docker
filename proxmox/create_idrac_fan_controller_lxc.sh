@@ -284,8 +284,15 @@ main() {
 
   # Controller config
   prompt_var IDRAC_HOST "Enter iDRAC IP/hostname" "192.168.1.100"
+  IDRAC_HOST="${IDRAC_HOST//$'\r'/}"
+  IDRAC_HOST="${IDRAC_HOST//$'\n'/}"
+  IDRAC_HOST="${IDRAC_HOST//[[:space:]]/}"
   prompt_var IDRAC_USERNAME "Enter iDRAC username" "root"
+  IDRAC_USERNAME="${IDRAC_USERNAME//$'\r'/}"
+  IDRAC_USERNAME="${IDRAC_USERNAME//$'\n'/}"
   prompt_secret IDRAC_PASSWORD "Enter iDRAC password"
+  IDRAC_PASSWORD="${IDRAC_PASSWORD//$'\r'/}"
+  IDRAC_PASSWORD="${IDRAC_PASSWORD//$'\n'/}"
 
   local cm
   read_with_prompt cm "Control method [auto|redfish|ipmi] (default: auto): " 0
