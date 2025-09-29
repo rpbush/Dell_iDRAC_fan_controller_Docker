@@ -33,8 +33,9 @@ assign_default() {
 
 list_storages_by_content() {
   local pattern=$1; shift
-  # Output: one storage id per line matching content pattern
-  pvesm status --storage 2>/dev/null | awk -v pat="$pattern" '$2 ~ pat {print $1}'
+  # Output: one storage id per line whose content column contains the pattern
+  # pvesm status output includes a header; search the whole line for content keywords
+  pvesm status 2>/dev/null | awk -v pat="$pattern" 'NR>1 && $0 ~ pat {print $1}'
 }
 
 select_storage_menu() {
@@ -244,12 +245,12 @@ main() {
   prompt_var HOSTNAME "Enter container hostname" "idrac-fanctl"
   # Detect storages and offer menus
   local detected_tmpl detected_rootfs
-  detected_tmpl=$(list_storages_by_content '/vztmpl/' | head -1)
-  detected_rootfs=$(list_storages_by_content '/container|rootdir/' | head -1)
+  detected_tmpl=$(list_storages_by_content 'vztmpl' | head -1)
+  detected_rootfs=$(list_storages_by_content 'rootdir|container' | head -1)
   if [[ -z "$detected_tmpl" ]]; then detected_tmpl="local"; fi
   if [[ -z "$detected_rootfs" ]]; then detected_rootfs="local-lvm"; fi
-  select_storage_menu TEMPLATE_STORAGE "Select template storage (supports vztmpl):" '/vztmpl/' "$detected_tmpl"
-  select_storage_menu ROOTFS_STORAGE "Select rootfs storage (supports container/rootdir):" '/container|rootdir/' "$detected_rootfs"
+  select_storage_menu TEMPLATE_STORAGE "Select template storage (supports vztmpl):" 'vztmpl' "$detected_tmpl"
+  select_storage_menu ROOTFS_STORAGE "Select rootfs storage (supports container/rootdir):" 'rootdir|container' "$detected_rootfs"
   assign_default BRIDGE "vmbr0" "network bridge"
   prompt_var CT_PASSWORD "Enter container root password" "changeme"
   assign_default CPU_CORES "1" "CPU cores"
