@@ -45,7 +45,8 @@ prompt_secret() {
   local user_input
   read -s -p "$prompt_message: " user_input || true
   echo ""
-  echo "$user_input"
+  # Return only the input without any extra characters
+  echo -n "$user_input"
 }
 
 list_all_storages() {
@@ -264,9 +265,8 @@ main() {
   
   echo "DEBUG: About to prompt for iDRAC password"
   IDRAC_PASSWORD=$(prompt_secret "Enter iDRAC password")
-  # Clean any newlines from password
-  IDRAC_PASSWORD=$(echo "$IDRAC_PASSWORD" | tr -d '\n\r')
   echo "DEBUG: iDRAC_PASSWORD length: ${#IDRAC_PASSWORD}"
+  echo "DEBUG: iDRAC_PASSWORD content: '${IDRAC_PASSWORD}'"
 
   local cm
   read -p "Control method [auto|redfish|ipmi] (default: auto): " cm || true
