@@ -20,9 +20,9 @@ TEMPLATE_NAME=${TEMPLATE_NAME:-}
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1" >&2; exit 1; }; }
 
 assign_default() {
-  local var_name=$1; shift
-  local default_value=$1; shift
-  local label=$1; shift || true
+  local var_name=$1
+  local default_value=$2
+  local label=${3:-}
   if [[ -z "${!var_name+x}" || -z "${!var_name}" ]]; then
     printf -v "$var_name" "%s" "$default_value"
     if [[ -n "$label" ]]; then
@@ -53,9 +53,9 @@ list_all_storages() {
 }
 
 select_storage_menu() {
-  local var_name=$1; shift
-  local title=$1; shift
-  local detected_default=$1; shift
+  local var_name=$1
+  local title=$2
+  local detected_default=$3
 
   local options idx choice
   mapfile -t options < <(list_all_storages)
