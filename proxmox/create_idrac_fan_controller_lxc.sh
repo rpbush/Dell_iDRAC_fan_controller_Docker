@@ -9,13 +9,9 @@ set -euo pipefail
 # Collected interactively via prompts below
 
 # Controller configuration (env for the service inside the container)
-IDRAC_HOST=""
-IDRAC_USERNAME=""
-IDRAC_PASSWORD=""
+# Intentionally not preset so prompts will appear
+# shellcheck disable=SC2034
 CONTROL_METHOD="auto" # ipmi|redfish|auto (can be changed via prompt)
-FAN_SPEED=""
-CPU_TEMPERATURE_TRESHOLD=""
-CHECK_INTERVAL=""
 
 # Template selection (auto-discover latest Debian 12 standard)
 TEMPLATE_NAME=${TEMPLATE_NAME:-}
@@ -23,13 +19,25 @@ TEMPLATE_NAME=${TEMPLATE_NAME:-}
 # -------- Helpers --------
 need_cmd() { command -v "$1" >/dev/null 2>&1 || { echo "Missing required command: $1" >&2; exit 1; }; }
 
+assign_default() {
+  local var_name=$1; shift
+  local default_value=$1; shift
+  local label=$1; shift || true
+  if [[ -z "${!var_name+x}" || -z "${!var_name}" ]]; then
+    printf -v "$var_name" "%s" "$default_value"
+    if [[ -n "$label" ]]; then
+      echo "Using default $label: ${!var_name}"
+    fi
+  fi
+}
+
 prompt_var() {
   local var_name=$1; shift
   local prompt_text=$1; shift
   local default_value=${1:-}
   local input
-  # If variable is already set, do nothing (avoid indirect expansion under set -u)
-  if [[ -n "${!var_name+x}" ]]; then
+  # If variable is already set and non-empty, do nothing
+  if [[ -n "${!var_name+x}" && -n "${!var_name}" ]]; then
     return 0
   fi
   if [[ -n "$default_value" ]]; then
@@ -45,8 +53,8 @@ prompt_secret() {
   local var_name=$1; shift
   local prompt_text=$1; shift
   local input
-  # If variable is already set, do nothing
-  if [[ -n "${!var_name+x}" ]]; then
+  # If variable is already set and non-empty, do nothing
+  if [[ -n "${!var_name+x}" && -n "${!var_name}" ]]; then
     return 0
   fi
   read -r -s -p "$prompt_text: " input || true
@@ -201,14 +209,14 @@ main() {
   prompt_var VMID "Enter container VMID" "902"
   prompt_var HOSTNAME "Enter container hostname" "idrac-fanctl"
   prompt_var STORAGE "Enter Proxmox storage for rootfs/template" "local"
-  prompt_var BRIDGE "Enter network bridge" "vmbr0"
+  assign_default BRIDGE "vmbr0" "network bridge"
   prompt_var CT_PASSWORD "Enter container root password" "changeme"
-  prompt_var CPU_CORES "Enter number of CPU cores" "1"
-  prompt_var MEMORY_MB "Enter memory (MB)" "256"
+  assign_default CPU_CORES "1" "CPU cores"
+  assign_default MEMORY_MB "256" "memory (MB)"
   prompt_var ROOTFS_GB "Enter rootfs size (GB)" "4"
 
   # Networking
-  prompt_var CT_IP_MODE "Networking mode [dhcp|static]" "dhcp"
+  assign_default CT_IP_MODE "dhcp" "network mode"
   case "$CT_IP_MODE" in
     static)
       prompt_var CT_IP "Static IP address" "192.168.1.250"
