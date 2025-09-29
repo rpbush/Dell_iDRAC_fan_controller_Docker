@@ -31,6 +31,40 @@ assign_default() {
   fi
 }
 
+list_storages_by_content() {
+  local pattern=$1; shift
+  # Output: one storage id per line matching content pattern
+  pvesm status --storage 2>/dev/null | awk -v pat="$pattern" '$2 ~ pat {print $1}'
+}
+
+select_storage_menu() {
+  local var_name=$1; shift
+  local title=$1; shift
+  local pattern=$1; shift
+  local detected_default=$1; shift
+
+  local options idx choice
+  mapfile -t options < <(list_storages_by_content "$pattern")
+  if [[ ${#options[@]} -eq 0 ]]; then
+    echo "No storages matching pattern '$pattern' found. Falling back to: $detected_default"
+    printf -v "$var_name" "%s" "$detected_default"
+    return 0
+  fi
+
+  echo "$title"
+  for idx in "${!options[@]}"; do
+    echo "  $((idx+1)). ${options[$idx]}"
+  done
+  echo -n "Select an option [1-${#options[@]}] (default 1): "
+  read -r choice || true
+  if [[ -z "$choice" ]]; then choice=1; fi
+  if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#options[@]} )); then
+    echo "Invalid choice. Using default 1."
+    choice=1
+  fi
+  printf -v "$var_name" "%s" "${options[$((choice-1))]}"
+}
+
 prompt_var() {
   local var_name=$1; shift
   local prompt_text=$1; shift
@@ -208,19 +242,19 @@ main() {
   # Container basics
   prompt_var VMID "Enter container VMID" "902"
   prompt_var HOSTNAME "Enter container hostname" "idrac-fanctl"
-  # Detect storages: template storage must support vztmpl; rootfs storage must support container/rootdir
+  # Detect storages and offer menus
   local detected_tmpl detected_rootfs
-  detected_tmpl=$(pvesm status --storage 2>/dev/null | awk '$2 ~ /vztmpl/ {print $1}' | head -1)
-  detected_rootfs=$(pvesm status --storage 2>/dev/null | awk '$2 ~ /container|rootdir/ {print $1}' | head -1)
+  detected_tmpl=$(list_storages_by_content '/vztmpl/' | head -1)
+  detected_rootfs=$(list_storages_by_content '/container|rootdir/' | head -1)
   if [[ -z "$detected_tmpl" ]]; then detected_tmpl="local"; fi
   if [[ -z "$detected_rootfs" ]]; then detected_rootfs="local-lvm"; fi
-  prompt_var TEMPLATE_STORAGE "Template storage (supports vztmpl)" "$detected_tmpl"
-  prompt_var ROOTFS_STORAGE "Rootfs storage (supports container/rootdir)" "$detected_rootfs"
+  select_storage_menu TEMPLATE_STORAGE "Select template storage (supports vztmpl):" '/vztmpl/' "$detected_tmpl"
+  select_storage_menu ROOTFS_STORAGE "Select rootfs storage (supports container/rootdir):" '/container|rootdir/' "$detected_rootfs"
   assign_default BRIDGE "vmbr0" "network bridge"
   prompt_var CT_PASSWORD "Enter container root password" "changeme"
   assign_default CPU_CORES "1" "CPU cores"
   assign_default MEMORY_MB "256" "memory (MB)"
-  prompt_var ROOTFS_GB "Enter rootfs size (GB)" "4"
+  assign_default ROOTFS_GB "4" "rootfs size (GB)"
 
   # Networking
   assign_default CT_IP_MODE "dhcp" "network mode"
