@@ -287,6 +287,7 @@ main() {
   IDRAC_HOST="${IDRAC_HOST//$'\r'/}"
   IDRAC_HOST="${IDRAC_HOST//$'\n'/}"
   IDRAC_HOST="${IDRAC_HOST//[[:space:]]/}"
+  echo "Using iDRAC host: $IDRAC_HOST"
   prompt_var IDRAC_USERNAME "Enter iDRAC username" "root"
   IDRAC_USERNAME="${IDRAC_USERNAME//$'\r'/}"
   IDRAC_USERNAME="${IDRAC_USERNAME//$'\n'/}"
@@ -302,7 +303,8 @@ main() {
     *) CONTROL_METHOD=auto ;;
   esac
   if [[ "$CONTROL_METHOD" == "redfish" || "$CONTROL_METHOD" == "auto" ]]; then
-    maybe_test_redfish "$IDRAC_HOST" "$IDRAC_USERNAME" "$IDRAC_PASSWORD"
+    local __host_for_test="$IDRAC_HOST"
+    maybe_test_redfish "$__host_for_test" "$IDRAC_USERNAME" "$IDRAC_PASSWORD"
   fi
 
   prompt_var FAN_SPEED "Fan speed percentage (0-100)" "20"
