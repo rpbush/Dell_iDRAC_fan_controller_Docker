@@ -87,9 +87,12 @@ maybe_test_redfish() {
   case "$answer" in
     y|Y)
       echo "Testing Redfish: https://$host/redfish/v1/ (self-signed allowed)"
-      # Sanity echo to confirm variables in use
-      echo "Redfish host/user in use: $host / $user"
-      if curl -k -s -S -u "$user:$pass" -o /dev/null -w "%{http_code}\n" "https://$host/redfish/v1/" | grep -qE '^(200|201|202|204)$'; then
+      echo "DEBUG: Using credentials user='$user', pass_length=${#pass}"
+      echo "DEBUG: Running curl command..."
+      local curl_output
+      curl_output=$(curl -k -s -S -u "$user:$pass" -o /dev/null -w "%{http_code}" "https://$host/redfish/v1/" 2>&1)
+      echo "DEBUG: Curl output: $curl_output"
+      if echo "$curl_output" | grep -qE '^(200|201|202|204)$'; then
         echo "Redfish reachable."
       else
         echo "WARNING: Redfish not reachable or credentials invalid. You can continue; IPMI may still work or fix connectivity."
@@ -261,7 +264,9 @@ main() {
   
   echo "DEBUG: About to prompt for iDRAC password"
   IDRAC_PASSWORD=$(prompt_secret "Enter iDRAC password")
-  echo "DEBUG: iDRAC_PASSWORD = '${IDRAC_PASSWORD:+[SET]}${IDRAC_PASSWORD:-[EMPTY]}'"
+  # Clean any newlines from password
+  IDRAC_PASSWORD=$(echo "$IDRAC_PASSWORD" | tr -d '\n\r')
+  echo "DEBUG: iDRAC_PASSWORD length: ${#IDRAC_PASSWORD}"
 
   local cm
   read -p "Control method [auto|redfish|ipmi] (default: auto): " cm || true
@@ -271,6 +276,7 @@ main() {
     *) CONTROL_METHOD=auto ;;
   esac
   if [[ "$CONTROL_METHOD" == "redfish" || "$CONTROL_METHOD" == "auto" ]]; then
+    echo "DEBUG: Testing Redfish with host=$IDRAC_HOST, user=$IDRAC_USERNAME, pass_length=${#IDRAC_PASSWORD}"
     maybe_test_redfish "$IDRAC_HOST" "$IDRAC_USERNAME" "$IDRAC_PASSWORD"
   fi
 
