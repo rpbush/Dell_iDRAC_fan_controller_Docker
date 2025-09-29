@@ -27,8 +27,8 @@ prompt_var() {
   local var_name=$1; shift
   local prompt_text=$1; shift
   local default_value=${1:-}
-  local current_value
-  current_value=$(eval echo "\${$var_name}")
+  local current_value input
+  current_value="${!var_name-}"
   if [[ -n "$current_value" ]]; then
     return 0
   fi
@@ -38,20 +38,20 @@ prompt_var() {
   else
     read -r -p "$prompt_text: " input || true
   fi
-  eval "$var_name=\"$input\""
+  printf -v "$var_name" "%s" "$input"
 }
 
 prompt_secret() {
   local var_name=$1; shift
   local prompt_text=$1; shift
-  local current_value
-  current_value=$(eval echo "\${$var_name}")
+  local current_value input
+  current_value="${!var_name-}"
   if [[ -n "$current_value" ]]; then
     return 0
   fi
   read -r -s -p "$prompt_text: " input || true
   echo ""
-  eval "$var_name=\"$input\""
+  printf -v "$var_name" "%s" "$input"
 }
 
 maybe_test_redfish() {
