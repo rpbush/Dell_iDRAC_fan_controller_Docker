@@ -53,6 +53,28 @@ read_with_prompt() {
   printf -v "$__outvar" "%s" "$input"
 }
 
+prompt_var_force() {
+  local var_name=$1; shift
+  local prompt_text=$1; shift
+  local default_value=${1:-}
+  local input=""
+  if [[ -n "$default_value" ]]; then
+    read_with_prompt input "$prompt_text [$default_value]: " 0
+    input=${input:-$default_value}
+  else
+    read_with_prompt input "$prompt_text: " 0
+  fi
+  printf -v "$var_name" "%s" "$input"
+}
+
+prompt_secret_force() {
+  local var_name=$1; shift
+  local prompt_text=$1; shift
+  local input=""
+  read_with_prompt input "$prompt_text: " 1
+  printf -v "$var_name" "%s" "$input"
+}
+
 list_all_storages() {
   # Output: one storage id per line
   pvesm status 2>/dev/null | awk 'NR>1 {print $1}'
@@ -123,6 +145,8 @@ maybe_test_redfish() {
   case "$answer" in
     y|Y)
       echo "Testing Redfish: https://$host/redfish/v1/ (self-signed allowed)"
+      # Sanity echo to confirm variables in use
+      echo "Redfish host/user in use: $host / $user"
       if curl -k -s -S -u "$user:$pass" -o /dev/null -w "%{http_code}\n" "https://$host/redfish/v1/" | grep -qE '^(200|201|202|204)$'; then
         echo "Redfish reachable."
       else
@@ -283,15 +307,15 @@ main() {
   esac
 
   # Controller config
-  prompt_var IDRAC_HOST "Enter iDRAC IP/hostname" "192.168.1.100"
+  prompt_var_force IDRAC_HOST "Enter iDRAC IP/hostname" "192.168.1.100"
   IDRAC_HOST="${IDRAC_HOST//$'\r'/}"
   IDRAC_HOST="${IDRAC_HOST//$'\n'/}"
   IDRAC_HOST="${IDRAC_HOST//[[:space:]]/}"
   echo "Using iDRAC host: $IDRAC_HOST"
-  prompt_var IDRAC_USERNAME "Enter iDRAC username" "root"
+  prompt_var_force IDRAC_USERNAME "Enter iDRAC username" "root"
   IDRAC_USERNAME="${IDRAC_USERNAME//$'\r'/}"
   IDRAC_USERNAME="${IDRAC_USERNAME//$'\n'/}"
-  prompt_secret IDRAC_PASSWORD "Enter iDRAC password"
+  prompt_secret_force IDRAC_PASSWORD "Enter iDRAC password"
   IDRAC_PASSWORD="${IDRAC_PASSWORD//$'\r'/}"
   IDRAC_PASSWORD="${IDRAC_PASSWORD//$'\n'/}"
 
