@@ -31,95 +31,20 @@ assign_default() {
   fi
 }
 
-open_tty_fds() {
-  # Determine file descriptors for prompting and reading
-  if [[ -t 0 ]]; then
-    READ_FD=0
-    PROMPT_FD=1
-  elif [[ -r /dev/tty && -w /dev/tty ]]; then
-    exec 3</dev/tty 4>/dev/tty
-    READ_FD=3
-    PROMPT_FD=4
-  else
-    READ_FD=0
-    PROMPT_FD=1
-  fi
+prompt_input() {
+  local prompt_message="$1"
+  local default_value="$2"
+  local user_input
+  read -p "$prompt_message [$default_value]: " user_input
+  echo "${user_input:-$default_value}"
 }
 
-close_tty_fds() {
-  if [[ ${READ_FD:-0} -eq 3 ]]; then exec 3<&- 4>&- || true; fi
-}
-
-read_with_prompt() {
-  local __outvar=$1; shift
-  local __prompt=$1; shift || true
-  local __silent=${1:-0}
-  local input
-  # Prefer /dev/tty directly to avoid weird stdin redirections
-  if [[ -r /dev/tty && -w /dev/tty ]]; then
-    printf "%s" "$__prompt" > /dev/tty
-    if [[ "$__silent" == "1" ]]; then
-      read -r -s input < /dev/tty || true
-      echo "" > /dev/tty
-    else
-      read -r input < /dev/tty || true
-    fi
-  else
-    # Fallback to stdio
-    printf "%s" "$__prompt"
-    if [[ "$__silent" == "1" ]]; then
-      read -r -s input || true
-      echo ""
-    else
-      read -r input || true
-    fi
-  fi
-  printf -v "$__outvar" "%s" "$input"
-}
-
-prompt_var_force() {
-  local var_name=$1; shift
-  local prompt_text=$1; shift
-  local default_value=${1:-}
-  local input=""
-  if [[ -n "$default_value" ]]; then
-    read_with_prompt input "$prompt_text [$default_value]: " 0
-    input=${input:-$default_value}
-  else
-    read_with_prompt input "$prompt_text: " 0
-  fi
-  printf -v "$var_name" "%s" "$input"
-}
-
-prompt_secret_force() {
-  local var_name=$1; shift
-  local prompt_text=$1; shift
-  local input=""
-  read_with_prompt input "$prompt_text: " 1
-  printf -v "$var_name" "%s" "$input"
-}
-
-prompt_var_required() {
-  local var_name=$1; shift
-  local prompt_text=$1; shift
-  local default_value=${1:-}
-  local input=""
-  while true; do
-    if [[ -n "$default_value" ]]; then
-      read_with_prompt input "$prompt_text [$default_value]: " 0
-      if [[ -z "$input" ]]; then
-        printf -v "$var_name" "%s" "$default_value"
-        break
-      fi
-    else
-      read_with_prompt input "$prompt_text: " 0
-      if [[ -z "$input" ]]; then
-        continue
-      fi
-    fi
-    printf -v "$var_name" "%s" "$input"
-    break
-  done
+prompt_secret() {
+  local prompt_message="$1"
+  local user_input
+  read -s -p "$prompt_message: " user_input
+  echo ""
+  echo "$user_input"
 }
 
 list_all_storages() {
@@ -144,8 +69,7 @@ select_storage_menu() {
   for idx in "${!options[@]}"; do
     echo "  $((idx+1)). ${options[$idx]}"
   done
-  echo -n "Select an option [1-${#options[@]}] (default 1): "
-  read_with_prompt choice "" 0
+  read -p "Select an option [1-${#options[@]}] (default 1): " choice || true
   if [[ -z "$choice" ]]; then choice=1; fi
   if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#options[@]} )); then
     echo "Invalid choice. Using default 1."
@@ -188,7 +112,7 @@ maybe_test_redfish() {
   local host="$1" user="$2" pass="$3"
   local answer
   echo "Redfish is recommended for iDRAC9 v7.00+. We'll test connectivity with HTTPS:443 using current credentials."
-  read_with_prompt answer "Test Redfish connectivity now? [y/N]: " 0
+  read -p "Test Redfish connectivity now? [y/N]: " answer || true
   case "$answer" in
     y|Y)
       echo "Testing Redfish: https://$host/redfish/v1/ (self-signed allowed)"
@@ -331,13 +255,13 @@ main() {
   echo "=== iDRAC Fan Controller LXC Setup ==="
 
   # Container basics
-  prompt_var VMID "Enter container VMID" "902"
-  prompt_var HOSTNAME "Enter container hostname" "idrac-fanctl"
+  VMID=$(prompt_input "Enter container VMID" "902")
+  HOSTNAME=$(prompt_input "Enter container hostname" "idrac-fanctl")
   # Prompt for storages with menu
   select_storage_menu TEMPLATE_STORAGE "Select template storage:" "local"
   select_storage_menu ROOTFS_STORAGE "Select rootfs storage:" "local-lvm"
   assign_default BRIDGE "vmbr0" "network bridge"
-  prompt_var CT_PASSWORD "Enter container root password" "changeme"
+  CT_PASSWORD=$(prompt_input "Enter container root password" "changeme")
   assign_default CPU_CORES "1" "CPU cores"
   assign_default MEMORY_MB "256" "memory (MB)"
   assign_default ROOTFS_GB "4" "rootfs size (GB)"
@@ -346,45 +270,37 @@ main() {
   assign_default CT_IP_MODE "dhcp" "network mode"
   case "$CT_IP_MODE" in
     static)
-      prompt_var CT_IP "Static IP address" "192.168.1.250"
-      prompt_var CT_MASK "CIDR mask (e.g., 24)" "24"
-      prompt_var CT_GW "Gateway" "192.168.1.1"
+      CT_IP=$(prompt_input "Static IP address" "192.168.1.250")
+      CT_MASK=$(prompt_input "CIDR mask (e.g., 24)" "24")
+      CT_GW=$(prompt_input "Gateway" "192.168.1.1")
       ;;
     *) CT_IP_MODE="dhcp" ;;
   esac
 
   # Controller config
-  prompt_var_required IDRAC_HOST "Enter iDRAC IP/hostname" "192.168.1.100"
-  IDRAC_HOST="${IDRAC_HOST//$'\r'/}"
-  IDRAC_HOST="${IDRAC_HOST//$'\n'/}"
-  IDRAC_HOST="${IDRAC_HOST//[[:space:]]/}"
-  echo "Using iDRAC host: [$IDRAC_HOST]"
-  prompt_var_force IDRAC_USERNAME "Enter iDRAC username" "root"
-  IDRAC_USERNAME="${IDRAC_USERNAME//$'\r'/}"
-  IDRAC_USERNAME="${IDRAC_USERNAME//$'\n'/}"
-  prompt_secret_force IDRAC_PASSWORD "Enter iDRAC password"
-  IDRAC_PASSWORD="${IDRAC_PASSWORD//$'\r'/}"
-  IDRAC_PASSWORD="${IDRAC_PASSWORD//$'\n'/}"
+  IDRAC_HOST=$(prompt_input "Enter iDRAC IP/hostname" "192.168.1.100")
+  echo "Using iDRAC host: $IDRAC_HOST"
+  IDRAC_USERNAME=$(prompt_input "Enter iDRAC username" "root")
+  IDRAC_PASSWORD=$(prompt_secret "Enter iDRAC password")
 
   local cm
-  read_with_prompt cm "Control method [auto|redfish|ipmi] (default: auto): " 0
+  read -p "Control method [auto|redfish|ipmi] (default: auto): " cm || true
   cm=${cm:-auto}
   case "$cm" in
     auto|redfish|ipmi) CONTROL_METHOD=$cm ;;
     *) CONTROL_METHOD=auto ;;
   esac
   if [[ "$CONTROL_METHOD" == "redfish" || "$CONTROL_METHOD" == "auto" ]]; then
-    local __host_for_test="$IDRAC_HOST"
-    maybe_test_redfish "$__host_for_test" "$IDRAC_USERNAME" "$IDRAC_PASSWORD"
+    maybe_test_redfish "$IDRAC_HOST" "$IDRAC_USERNAME" "$IDRAC_PASSWORD"
   fi
 
-  prompt_var FAN_SPEED "Fan speed percentage (0-100)" "20"
-  prompt_var CPU_TEMPERATURE_TRESHOLD "CPU temp threshold (°C)" "60"
-  prompt_var CHECK_INTERVAL "Check interval (s)" "30"
+  FAN_SPEED=$(prompt_input "Fan speed percentage (0-100)" "20")
+  CPU_TEMPERATURE_TRESHOLD=$(prompt_input "CPU temp threshold (°C)" "60")
+  CHECK_INTERVAL=$(prompt_input "Check interval (s)" "30")
 
   # Optional IPMI device mapping
   local map
-  read_with_prompt map "Map host /dev/ipmi0 into container? [y/N]: " 0
+  read -p "Map host /dev/ipmi0 into container? [y/N]: " map || true
   case "$map" in
     y|Y) MAP_IPMI_DEVICE=1 ;;
     *) MAP_IPMI_DEVICE=0 ;;
