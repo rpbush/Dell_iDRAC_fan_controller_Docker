@@ -167,18 +167,13 @@ install_dependencies() {
 }
 
 deploy_controller() {
-  echo "Deploying controller script"
-  local script_dir
-  script_dir="$(cd "$(dirname "$0")/.." && pwd)"
-  local script_path="$script_dir/Dell_iDRAC_fan_controller.sh"
+  echo "Deploying controller script from GitHub"
   
-  if [[ ! -f "$script_path" ]]; then
-    echo "ERROR: Controller script not found at $script_path"
-    exit 1
-  fi
+  # Download the controller script directly from GitHub into the container
+  local github_url="https://raw.githubusercontent.com/rpbush/Dell_iDRAC_fan_controller_Docker/master/Dell_iDRAC_fan_controller.sh"
   
-  echo "DEBUG: Copying script from $script_path"
-  push_into_container "$script_path" "/usr/local/bin/Dell_iDRAC_fan_controller.sh"
+  echo "DEBUG: Downloading controller script from $github_url"
+  exec_in_container "curl -fsSL '$github_url' -o /usr/local/bin/Dell_iDRAC_fan_controller.sh"
   exec_in_container "chmod 0755 /usr/local/bin/Dell_iDRAC_fan_controller.sh"
 
   echo "Writing environment file"
