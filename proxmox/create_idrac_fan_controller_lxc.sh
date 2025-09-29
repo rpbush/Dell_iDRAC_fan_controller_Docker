@@ -36,7 +36,8 @@ prompt_input() {
   local default_value="$2"
   local user_input
   read -p "$prompt_message [$default_value]: " user_input
-  echo "${user_input:-$default_value}"
+  local result="${user_input:-$default_value}"
+  echo "$result"
 }
 
 prompt_secret() {
@@ -257,12 +258,19 @@ main() {
   esac
 
   # Controller config
+  echo "DEBUG: About to prompt for iDRAC host"
   IDRAC_HOST=$(prompt_input "Enter iDRAC IP/hostname" "192.168.1.100")
+  echo "DEBUG: iDRAC_HOST = '$IDRAC_HOST'"
   echo "Using iDRAC host: $IDRAC_HOST"
+  
+  echo "DEBUG: About to prompt for iDRAC username"
   IDRAC_USERNAME=$(prompt_input "Enter iDRAC username" "root")
+  echo "DEBUG: iDRAC_USERNAME = '$IDRAC_USERNAME'"
   echo "Using iDRAC username: $IDRAC_USERNAME"
+  
+  echo "DEBUG: About to prompt for iDRAC password"
   IDRAC_PASSWORD=$(prompt_secret "Enter iDRAC password")
-  echo "Password captured: ${IDRAC_PASSWORD:+[SET]}${IDRAC_PASSWORD:-[EMPTY]}"
+  echo "DEBUG: iDRAC_PASSWORD = '${IDRAC_PASSWORD:+[SET]}${IDRAC_PASSWORD:-[EMPTY]}'"
 
   local cm
   read -p "Control method [auto|redfish|ipmi] (default: auto): " cm || true
