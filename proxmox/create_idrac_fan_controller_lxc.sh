@@ -99,6 +99,29 @@ prompt_secret_force() {
   printf -v "$var_name" "%s" "$input"
 }
 
+prompt_var_required() {
+  local var_name=$1; shift
+  local prompt_text=$1; shift
+  local default_value=${1:-}
+  local input=""
+  while true; do
+    if [[ -n "$default_value" ]]; then
+      read_with_prompt input "$prompt_text [$default_value]: " 0
+      if [[ -z "$input" ]]; then
+        printf -v "$var_name" "%s" "$default_value"
+        break
+      fi
+    else
+      read_with_prompt input "$prompt_text: " 0
+      if [[ -z "$input" ]]; then
+        continue
+      fi
+    fi
+    printf -v "$var_name" "%s" "$input"
+    break
+  done
+}
+
 list_all_storages() {
   # Output: one storage id per line
   pvesm status 2>/dev/null | awk 'NR>1 {print $1}'
@@ -331,7 +354,7 @@ main() {
   esac
 
   # Controller config
-  prompt_var_force IDRAC_HOST "Enter iDRAC IP/hostname" "192.168.1.100"
+  prompt_var_required IDRAC_HOST "Enter iDRAC IP/hostname" "192.168.1.100"
   IDRAC_HOST="${IDRAC_HOST//$'\r'/}"
   IDRAC_HOST="${IDRAC_HOST//$'\n'/}"
   IDRAC_HOST="${IDRAC_HOST//[[:space:]]/}"
