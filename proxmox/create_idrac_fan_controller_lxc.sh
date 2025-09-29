@@ -55,14 +55,24 @@ read_with_prompt() {
   local __prompt=$1; shift || true
   local __silent=${1:-0}
   local input
-  if [[ -z ${READ_FD+x} ]]; then open_tty_fds; fi
-  if [[ "$__silent" == "1" ]]; then
-    printf "%s" "$__prompt" >&$PROMPT_FD
-    read -r -u "$READ_FD" -s input || true
-    printf "\n" >&$PROMPT_FD
+  # Prefer /dev/tty directly to avoid weird stdin redirections
+  if [[ -r /dev/tty && -w /dev/tty ]]; then
+    printf "%s" "$__prompt" > /dev/tty
+    if [[ "$__silent" == "1" ]]; then
+      read -r -s input < /dev/tty || true
+      echo "" > /dev/tty
+    else
+      read -r input < /dev/tty || true
+    fi
   else
-    printf "%s" "$__prompt" >&$PROMPT_FD
-    read -r -u "$READ_FD" input || true
+    # Fallback to stdio
+    printf "%s" "$__prompt"
+    if [[ "$__silent" == "1" ]]; then
+      read -r -s input || true
+      echo ""
+    else
+      read -r input || true
+    fi
   fi
   printf -v "$__outvar" "%s" "$input"
 }
@@ -325,7 +335,7 @@ main() {
   IDRAC_HOST="${IDRAC_HOST//$'\r'/}"
   IDRAC_HOST="${IDRAC_HOST//$'\n'/}"
   IDRAC_HOST="${IDRAC_HOST//[[:space:]]/}"
-  echo "Using iDRAC host: $IDRAC_HOST"
+  echo "Using iDRAC host: [$IDRAC_HOST]"
   prompt_var_force IDRAC_USERNAME "Enter iDRAC username" "root"
   IDRAC_USERNAME="${IDRAC_USERNAME//$'\r'/}"
   IDRAC_USERNAME="${IDRAC_USERNAME//$'\n'/}"
