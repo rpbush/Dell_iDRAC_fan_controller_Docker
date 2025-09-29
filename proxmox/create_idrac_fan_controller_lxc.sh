@@ -31,29 +31,38 @@ assign_default() {
   fi
 }
 
+open_tty_fds() {
+  # Determine file descriptors for prompting and reading
+  if [[ -t 0 ]]; then
+    READ_FD=0
+    PROMPT_FD=1
+  elif [[ -r /dev/tty && -w /dev/tty ]]; then
+    exec 3</dev/tty 4>/dev/tty
+    READ_FD=3
+    PROMPT_FD=4
+  else
+    READ_FD=0
+    PROMPT_FD=1
+  fi
+}
+
+close_tty_fds() {
+  if [[ ${READ_FD:-0} -eq 3 ]]; then exec 3<&- 4>&- || true; fi
+}
+
 read_with_prompt() {
   local __outvar=$1; shift
   local __prompt=$1; shift || true
   local __silent=${1:-0}
   local input
+  if [[ -z ${READ_FD+x} ]]; then open_tty_fds; fi
   if [[ "$__silent" == "1" ]]; then
-    if [[ -w /dev/tty && -r /dev/tty ]]; then
-      printf "%s" "$__prompt" > /dev/tty
-      read -r -s input < /dev/tty || true
-      echo "" > /dev/tty
-    else
-      printf "%s" "$__prompt"
-      read -r -s input || true
-      echo ""
-    fi
+    printf "%s" "$__prompt" >&$PROMPT_FD
+    read -r -u "$READ_FD" -s input || true
+    printf "\n" >&$PROMPT_FD
   else
-    if [[ -w /dev/tty && -r /dev/tty ]]; then
-      printf "%s" "$__prompt" > /dev/tty
-      read -r input < /dev/tty || true
-    else
-      printf "%s" "$__prompt"
-      read -r input || true
-    fi
+    printf "%s" "$__prompt" >&$PROMPT_FD
+    read -r -u "$READ_FD" input || true
   fi
   printf -v "$__outvar" "%s" "$input"
 }
