@@ -260,7 +260,9 @@ main() {
   IDRAC_HOST=$(prompt_input "Enter iDRAC IP/hostname" "192.168.1.100")
   echo "Using iDRAC host: $IDRAC_HOST"
   IDRAC_USERNAME=$(prompt_input "Enter iDRAC username" "root")
+  echo "Using iDRAC username: $IDRAC_USERNAME"
   IDRAC_PASSWORD=$(prompt_secret "Enter iDRAC password")
+  echo "Password captured: ${IDRAC_PASSWORD:+[SET]}${IDRAC_PASSWORD:-[EMPTY]}"
 
   local cm
   read -p "Control method [auto|redfish|ipmi] (default: auto): " cm || true
