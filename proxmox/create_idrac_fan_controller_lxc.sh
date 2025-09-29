@@ -168,7 +168,17 @@ install_dependencies() {
 
 deploy_controller() {
   echo "Deploying controller script"
-  push_into_container "$(dirname "$0")/../Dell_iDRAC_fan_controller.sh" "/usr/local/bin/Dell_iDRAC_fan_controller.sh"
+  local script_dir
+  script_dir="$(cd "$(dirname "$0")/.." && pwd)"
+  local script_path="$script_dir/Dell_iDRAC_fan_controller.sh"
+  
+  if [[ ! -f "$script_path" ]]; then
+    echo "ERROR: Controller script not found at $script_path"
+    exit 1
+  fi
+  
+  echo "DEBUG: Copying script from $script_path"
+  push_into_container "$script_path" "/usr/local/bin/Dell_iDRAC_fan_controller.sh"
   exec_in_container "chmod 0755 /usr/local/bin/Dell_iDRAC_fan_controller.sh"
 
   echo "Writing environment file"
