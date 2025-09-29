@@ -37,17 +37,22 @@ read_with_prompt() {
   local __silent=${1:-0}
   local input
   if [[ "$__silent" == "1" ]]; then
-    if [[ -r /dev/tty ]]; then
-      read -r -s -p "$__prompt" input < /dev/tty || true
+    if [[ -w /dev/tty && -r /dev/tty ]]; then
+      printf "%s" "$__prompt" > /dev/tty
+      read -r -s input < /dev/tty || true
+      echo "" > /dev/tty
     else
-      read -r -s -p "$__prompt" input || true
+      printf "%s" "$__prompt"
+      read -r -s input || true
+      echo ""
     fi
-    echo ""
   else
-    if [[ -r /dev/tty ]]; then
-      read -r -p "$__prompt" input < /dev/tty || true
+    if [[ -w /dev/tty && -r /dev/tty ]]; then
+      printf "%s" "$__prompt" > /dev/tty
+      read -r input < /dev/tty || true
     else
-      read -r -p "$__prompt" input || true
+      printf "%s" "$__prompt"
+      read -r input || true
     fi
   fi
   printf -v "$__outvar" "%s" "$input"
