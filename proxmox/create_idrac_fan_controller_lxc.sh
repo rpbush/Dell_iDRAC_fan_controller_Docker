@@ -27,9 +27,9 @@ prompt_var() {
   local var_name=$1; shift
   local prompt_text=$1; shift
   local default_value=${1:-}
-  local current_value input
-  current_value="${!var_name-}"
-  if [[ -n "$current_value" ]]; then
+  local input
+  # If variable is already set, do nothing (avoid indirect expansion under set -u)
+  if [[ -n "${!var_name+x}" ]]; then
     return 0
   fi
   if [[ -n "$default_value" ]]; then
@@ -44,9 +44,9 @@ prompt_var() {
 prompt_secret() {
   local var_name=$1; shift
   local prompt_text=$1; shift
-  local current_value input
-  current_value="${!var_name-}"
-  if [[ -n "$current_value" ]]; then
+  local input
+  # If variable is already set, do nothing
+  if [[ -n "${!var_name+x}" ]]; then
     return 0
   fi
   read -r -s -p "$prompt_text: " input || true
