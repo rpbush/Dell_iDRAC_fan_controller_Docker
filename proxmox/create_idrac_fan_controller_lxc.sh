@@ -31,6 +31,28 @@ assign_default() {
   fi
 }
 
+read_with_prompt() {
+  local __outvar=$1; shift
+  local __prompt=$1; shift || true
+  local __silent=${1:-0}
+  local input
+  if [[ "$__silent" == "1" ]]; then
+    if [[ -r /dev/tty ]]; then
+      read -r -s -p "$__prompt" input < /dev/tty || true
+    else
+      read -r -s -p "$__prompt" input || true
+    fi
+    echo ""
+  else
+    if [[ -r /dev/tty ]]; then
+      read -r -p "$__prompt" input < /dev/tty || true
+    else
+      read -r -p "$__prompt" input || true
+    fi
+  fi
+  printf -v "$__outvar" "%s" "$input"
+}
+
 list_storages_by_content() {
   local pattern=$1; shift
   # Output: one storage id per line whose content column contains the pattern
@@ -57,7 +79,7 @@ select_storage_menu() {
     echo "  $((idx+1)). ${options[$idx]}"
   done
   echo -n "Select an option [1-${#options[@]}] (default 1): "
-  read -r choice || true
+  read_with_prompt choice "" 0
   if [[ -z "$choice" ]]; then choice=1; fi
   if ! [[ "$choice" =~ ^[0-9]+$ ]] || (( choice < 1 || choice > ${#options[@]} )); then
     echo "Invalid choice. Using default 1."
@@ -76,10 +98,10 @@ prompt_var() {
     return 0
   fi
   if [[ -n "$default_value" ]]; then
-    read -r -p "$prompt_text [$default_value]: " input || true
+    read_with_prompt input "$prompt_text [$default_value]: " 0
     input=${input:-$default_value}
   else
-    read -r -p "$prompt_text: " input || true
+    read_with_prompt input "$prompt_text: " 0
   fi
   printf -v "$var_name" "%s" "$input"
 }
@@ -92,15 +114,14 @@ prompt_secret() {
   if [[ -n "${!var_name+x}" && -n "${!var_name}" ]]; then
     return 0
   fi
-  read -r -s -p "$prompt_text: " input || true
-  echo ""
+  read_with_prompt input "$prompt_text: " 1
   printf -v "$var_name" "%s" "$input"
 }
 
 maybe_test_redfish() {
   local answer
   echo "Redfish is recommended for iDRAC9 v7.00+. We'll test connectivity with HTTPS:443 using current credentials."
-  read -r -p "Test Redfish connectivity now? [y/N]: " answer || true
+  read_with_prompt answer "Test Redfish connectivity now? [y/N]: " 0
   case "$answer" in
     y|Y)
       echo "Testing Redfish: https://$IDRAC_HOST/redfish/v1/ (self-signed allowed)"
@@ -274,7 +295,7 @@ main() {
   prompt_secret IDRAC_PASSWORD "Enter iDRAC password"
 
   local cm
-  read -r -p "Control method [auto|redfish|ipmi] (default: auto): " cm || true
+  read_with_prompt cm "Control method [auto|redfish|ipmi] (default: auto): " 0
   cm=${cm:-auto}
   case "$cm" in
     auto|redfish|ipmi) CONTROL_METHOD=$cm ;;
@@ -290,7 +311,7 @@ main() {
 
   # Optional IPMI device mapping
   local map
-  read -r -p "Map host /dev/ipmi0 into container? [y/N]: " map || true
+  read_with_prompt map "Map host /dev/ipmi0 into container? [y/N]: " 0
   case "$map" in
     y|Y) MAP_IPMI_DEVICE=1 ;;
     *) MAP_IPMI_DEVICE=0 ;;
