@@ -97,15 +97,11 @@ prompt_var() {
 }
 
 prompt_secret() {
-  local var_name=$1; shift
-  local prompt_text=$1; shift
-  local input=""
-  # If variable is already set and non-empty, do nothing (set -u safe)
-  if [[ "${!var_name+x}" == "x" && -n "${!var_name-}" ]]; then
-    return 0
-  fi
-  read_with_prompt input "$prompt_text: " 1
-  printf -v "$var_name" "%s" "$input"
+  local prompt_message="$1"
+  local user_input
+  read -s -p "$prompt_message: " user_input
+  echo ""
+  echo "$user_input"
 }
 
 maybe_test_redfish() {
