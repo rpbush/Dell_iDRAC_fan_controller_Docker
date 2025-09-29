@@ -78,23 +78,6 @@ select_storage_menu() {
   printf -v "$var_name" "%s" "${options[$((choice-1))]}"
 }
 
-prompt_var() {
-  local var_name=$1; shift
-  local prompt_text=$1; shift
-  local default_value=${1:-}
-  local input=""
-  # If variable is already set and non-empty, do nothing (set -u safe)
-  if [[ "${!var_name+x}" == "x" && -n "${!var_name-}" ]]; then
-    return 0
-  fi
-  if [[ -n "$default_value" ]]; then
-    read_with_prompt input "$prompt_text [$default_value]: " 0
-    input=${input:-$default_value}
-  else
-    read_with_prompt input "$prompt_text: " 0
-  fi
-  printf -v "$var_name" "%s" "$input"
-}
 
 prompt_secret() {
   local prompt_message="$1"
