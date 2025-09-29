@@ -163,7 +163,7 @@ push_into_container() {
 
 install_dependencies() {
   echo "Installing dependencies in container"
-  exec_in_container "export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get install -y --no-install-recommends ipmitool curl jq ca-certificates && apt-get clean && rm -rf /var/lib/apt/lists/*"
+  exec_in_container "export DEBIAN_FRONTEND=noninteractive; apt-get update && apt-get install -y --no-install-recommends ipmitool curl jq ca-certificates bc && apt-get clean && rm -rf /var/lib/apt/lists/*"
 }
 
 deploy_controller() {
@@ -207,6 +207,145 @@ WantedBy=multi-user.target
 EOF"
 
   exec_in_container "systemctl daemon-reload && systemctl enable --now idrac-fan-controller.service"
+}
+
+create_status_script() {
+  echo "Creating status monitoring script"
+  exec_in_container "cat > /usr/local/bin/idrac-status <<'EOF'
+#!/bin/bash
+set -euo pipefail
+
+# Load environment variables
+if [[ -f /etc/default/idrac-fan-controller ]]; then
+  source /etc/default/idrac-fan-controller
+fi
+
+# Colors for output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+YELLOW='\033[1;33m'
+BLUE='\033[0;34m'
+NC='\033[0m' # No Color
+
+echo -e \"\${BLUE}=== iDRAC Fan Controller Status ===\${NC}\"
+echo \"Host: \$IDRAC_HOST\"
+echo \"Username: \$IDRAC_USERNAME\"
+echo \"Control Method: \$CONTROL_METHOD\"
+echo \"Target Fan Speed: \$FAN_SPEED%\"
+echo \"CPU Temperature Threshold: \$CPU_TEMPERATURE_TRESHOLD°C\"
+echo \"Check Interval: \$CHECK_INTERVAL seconds\"
+echo \"\"
+
+# Check service status
+echo -e \"\${BLUE}=== Service Status ===\${NC}\"
+if systemctl is-active --quiet idrac-fan-controller; then
+  echo -e \"Service Status: \${GREEN}RUNNING\${NC}\"
+else
+  echo -e \"Service Status: \${RED}STOPPED\${NC}\"
+fi
+
+if systemctl is-enabled --quiet idrac-fan-controller; then
+  echo -e \"Service Enabled: \${GREEN}YES\${NC}\"
+else
+  echo -e \"Service Enabled: \${RED}NO\${NC}\"
+fi
+
+# Show recent logs
+echo -e \"\n\${BLUE}=== Recent Logs (last 10 lines) ===\${NC}\"
+journalctl -u idrac-fan-controller --no-pager -n 10 --since \"5 minutes ago\" || echo \"No recent logs\"
+
+echo -e \"\n\${BLUE}=== Current Readings ===\${NC}\"
+
+# Function to get temperature via IPMI
+get_temp_ipmi() {
+  local temp
+  temp=\$(ipmitool -I lanplus -H \"\$IDRAC_HOST\" -U \"\$IDRAC_USERNAME\" -P \"\$IDRAC_PASSWORD\" sdr type temperature 2>/dev/null | grep -E \"CPU|Ambient\" | head -1 | awk '{print \$4}' | sed 's/[^0-9.]//g')
+  if [[ -n \"\$temp\" && \"\$temp\" != \"\" ]]; then
+    echo \"\$temp\"
+  else
+    echo \"N/A\"
+  fi
+}
+
+# Function to get fan speed via IPMI
+get_fan_ipmi() {
+  local fan_speed
+  fan_speed=\$(ipmitool -I lanplus -H \"\$IDRAC_HOST\" -U \"\$IDRAC_USERNAME\" -P \"\$IDRAC_PASSWORD\" sdr type fan 2>/dev/null | head -1 | awk '{print \$4}' | sed 's/[^0-9.]//g')
+  if [[ -n \"\$fan_speed\" && \"\$fan_speed\" != \"\" ]]; then
+    echo \"\$fan_speed\"
+  else
+    echo \"N/A\"
+  fi
+}
+
+# Function to get temperature via Redfish
+get_temp_redfish() {
+  local temp
+  temp=\$(curl -k -s -u \"\$IDRAC_USERNAME:\$IDRAC_PASSWORD\" \"https://\$IDRAC_HOST/redfish/v1/Chassis/System.Embedded.1/Thermal\" 2>/dev/null | jq -r '.Temperatures[]? | select(.Name | test(\"CPU|Ambient\"; \"i\")) | .ReadingCelsius' 2>/dev/null | head -1)
+  if [[ -n \"\$temp\" && \"\$temp\" != \"null\" && \"\$temp\" != \"\" ]]; then
+    echo \"\$temp\"
+  else
+    echo \"N/A\"
+  fi
+}
+
+# Function to get fan speed via Redfish
+get_fan_redfish() {
+  local fan_speed
+  fan_speed=\$(curl -k -s -u \"\$IDRAC_USERNAME:\$IDRAC_PASSWORD\" \"https://\$IDRAC_HOST/redfish/v1/Chassis/System.Embedded.1/Thermal\" 2>/dev/null | jq -r '.Fans[]? | .Reading' 2>/dev/null | head -1)
+  if [[ -n \"\$fan_speed\" && \"\$fan_speed\" != \"null\" && \"\$fan_speed\" != \"\" ]]; then
+    echo \"\$fan_speed\"
+  else
+    echo \"N/A\"
+  fi
+}
+
+# Try to get readings based on control method
+if [[ \"\$CONTROL_METHOD\" == \"redfish\" ]]; then
+  echo \"Using Redfish method...\"
+  temp=\$(get_temp_redfish)
+  fan_speed=\$(get_fan_redfish)
+elif [[ \"\$CONTROL_METHOD\" == \"ipmi\" ]]; then
+  echo \"Using IPMI method...\"
+  temp=\$(get_temp_ipmi)
+  fan_speed=\$(get_fan_ipmi)
+else
+  # Auto mode - try Redfish first, then IPMI
+  echo \"Using auto mode (trying Redfish first)...\"
+  temp=\$(get_temp_redfish)
+  fan_speed=\$(get_fan_redfish)
+  
+  if [[ \"\$temp\" == \"N/A\" || \"\$fan_speed\" == \"N/A\" ]]; then
+    echo \"Redfish failed, trying IPMI...\"
+    temp=\$(get_temp_ipmi)
+    fan_speed=\$(get_fan_ipmi)
+  fi
+fi
+
+# Display readings with color coding
+if [[ \"\$temp\" != \"N/A\" ]]; then
+  if (( \$(echo \"\$temp > \$CPU_TEMPERATURE_TRESHOLD\" | bc -l) )); then
+    echo -e \"Current Temperature: \${RED}\${temp}°C\${NC} (above threshold)\"
+  else
+    echo -e \"Current Temperature: \${GREEN}\${temp}°C\${NC}\"
+  fi
+else
+  echo -e \"Current Temperature: \${YELLOW}N/A\${NC}\"
+fi
+
+if [[ \"\$fan_speed\" != \"N/A\" ]]; then
+  echo -e \"Current Fan Speed: \${GREEN}\${fan_speed}%\${NC}\"
+else
+  echo -e \"Current Fan Speed: \${YELLOW}N/A\${NC}\"
+fi
+
+echo -e \"\n\${BLUE}=== Usage ===\${NC}\"
+echo \"Run 'idrac-status' to see this status information\"
+echo \"Run 'journalctl -u idrac-fan-controller -f' to follow live logs\"
+echo \"Run 'systemctl status idrac-fan-controller' for detailed service status\"
+EOF"
+
+  exec_in_container "chmod 0755 /usr/local/bin/idrac-status"
 }
 
 # Optional: Map host IPMI device into container (for local IPMI control). Disabled by default.
@@ -307,8 +446,10 @@ main() {
   start_container
   install_dependencies
   deploy_controller
+  create_status_script
   map_ipmi_device_if_requested || true
   echo "Done. Container $VMID is running $HOSTNAME. Service: idrac-fan-controller"
+  echo "Run 'pct exec $VMID idrac-status' to check fan controller status"
 }
 
 main "$@"
