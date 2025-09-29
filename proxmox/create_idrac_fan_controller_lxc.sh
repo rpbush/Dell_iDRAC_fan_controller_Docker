@@ -225,7 +225,8 @@ map_ipmi_device_if_requested() {
       echo "lxc.mount.entry: /dev/ipmi0 dev/ipmi0 none bind,create=file,optional"
     } >> "$cfg"
     echo "Restarting container to apply device mapping"
-    pct restart "$VMID"
+    pct stop "$VMID"
+    pct start "$VMID"
   fi
 }
 
