@@ -90,9 +90,9 @@ ensure_template() {
     exit 1
   fi
   TEMPLATE_NAME=$latest
-  if ! pveam list "$STORAGE" | awk '{print $2}' | grep -q "$(basename "$TEMPLATE_NAME")"; then
-    echo "Downloading template to $STORAGE: $TEMPLATE_NAME"
-    pveam download "$STORAGE" "$TEMPLATE_NAME"
+  if ! pveam list "$TEMPLATE_STORAGE" | awk '{print $2}' | grep -q "$(basename "$TEMPLATE_NAME")"; then
+    echo "Downloading template to $TEMPLATE_STORAGE: $TEMPLATE_NAME"
+    pveam download "$TEMPLATE_STORAGE" "$TEMPLATE_NAME"
   fi
 }
 
@@ -109,13 +109,13 @@ create_container() {
     return 0
   fi
 
-  echo "Creating LXC $VMID on $STORAGE using $(basename "$TEMPLATE_NAME")"
-  pct create "$VMID" "$STORAGE:vztmpl/$(basename "$TEMPLATE_NAME")" \
+  echo "Creating LXC $VMID using template storage $TEMPLATE_STORAGE and rootfs on $ROOTFS_STORAGE"
+  pct create "$VMID" "$TEMPLATE_STORAGE:vztmpl/$(basename "$TEMPLATE_NAME")" \
     --hostname "$HOSTNAME" \
     --password "$CT_PASSWORD" \
     --cores "$CPU_CORES" \
     --memory "$MEMORY_MB" \
-    --rootfs "$STORAGE:$ROOTFS_GB" \
+    --rootfs "$ROOTFS_STORAGE:$ROOTFS_GB" \
     --unprivileged 1 \
     --features "nesting=1,keyctl=1" \
     --net0 "$netconf"
@@ -208,7 +208,14 @@ main() {
   # Container basics
   prompt_var VMID "Enter container VMID" "902"
   prompt_var HOSTNAME "Enter container hostname" "idrac-fanctl"
-  prompt_var STORAGE "Enter Proxmox storage for rootfs/template" "local"
+  # Detect storages: template storage must support vztmpl; rootfs storage must support container/rootdir
+  local detected_tmpl detected_rootfs
+  detected_tmpl=$(pvesm status --storage 2>/dev/null | awk '$2 ~ /vztmpl/ {print $1}' | head -1)
+  detected_rootfs=$(pvesm status --storage 2>/dev/null | awk '$2 ~ /container|rootdir/ {print $1}' | head -1)
+  if [[ -z "$detected_tmpl" ]]; then detected_tmpl="local"; fi
+  if [[ -z "$detected_rootfs" ]]; then detected_rootfs="local-lvm"; fi
+  prompt_var TEMPLATE_STORAGE "Template storage (supports vztmpl)" "$detected_tmpl"
+  prompt_var ROOTFS_STORAGE "Rootfs storage (supports container/rootdir)" "$detected_rootfs"
   assign_default BRIDGE "vmbr0" "network bridge"
   prompt_var CT_PASSWORD "Enter container root password" "changeme"
   assign_default CPU_CORES "1" "CPU cores"
