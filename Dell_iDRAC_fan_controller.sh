@@ -11,27 +11,79 @@ create_admin_user() {
   
   echo "Attempting to create admin user '$admin_user' for fan control..."
   
-  # Try to create user via Redfish
-  local user_payload="{
-    \"UserName\": \"$admin_user\",
-    \"Password\": \"$admin_pass\",
-    \"RoleId\": \"Administrator\",
-    \"Enabled\": true
-  }"
+  # Check if user already exists first
+  local existing_user
+  existing_user=$(curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
+    "https://$IDRAC_HOST/redfish/v1/AccountService/Accounts" 2>/dev/null | \
+    jq -r '.Members[]? | .@odata.id' 2>/dev/null | \
+    xargs -I {} curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
+    "https://$IDRAC_HOST{}" 2>/dev/null | \
+    jq -r 'select(.UserName == "'$admin_user'") | .UserName' 2>/dev/null)
   
-  if curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
-    -H "Content-Type: application/json" \
-    -X POST "https://$IDRAC_HOST/redfish/v1/AccountService/Accounts" \
-    -d "$user_payload" -o /dev/null -w "%{http_code}" | grep -qE '^(200|201|202|204)$'; then
-    echo "Admin user '$admin_user' created successfully"
-    echo "Updating credentials for fan control..."
-    IDRAC_USERNAME="$admin_user"
-    IDRAC_PASSWORD="$admin_pass"
-    return 0
-  else
-    echo "Failed to create admin user, continuing with root user"
-    return 1
+  if [[ "$existing_user" == "$admin_user" ]]; then
+    echo "Admin user '$admin_user' already exists, updating password..."
+    # Try to update existing user password
+    local update_payload="{\"Password\": \"$admin_pass\"}"
+    local response_code
+    response_code=$(curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
+      -H "Content-Type: application/json" \
+      -X PATCH "https://$IDRAC_HOST/redfish/v1/AccountService/Accounts/$admin_user" \
+      -d "$update_payload" -o /dev/null -w "%{http_code}" 2>/dev/null)
+    
+    if echo "$response_code" | grep -qE '^(200|201|202|204)$'; then
+      echo "Admin user '$admin_user' password updated successfully"
+      IDRAC_USERNAME="$admin_user"
+      IDRAC_PASSWORD="$admin_pass"
+      return 0
+    else
+      echo "Failed to update existing admin user password (HTTP: $response_code)"
+      return 1
+    fi
   fi
+  
+  # Try different user creation approaches
+  local -a user_payloads=(
+    "{\"UserName\": \"$admin_user\", \"Password\": \"$admin_pass\", \"RoleId\": \"Administrator\", \"Enabled\": true}"
+    "{\"UserName\": \"$admin_user\", \"Password\": \"$admin_pass\", \"RoleId\": \"Admin\", \"Enabled\": true}"
+    "{\"UserName\": \"$admin_user\", \"Password\": \"$admin_pass\", \"RoleId\": \"Administrator\"}"
+  )
+  
+  local -a endpoints=(
+    "https://$IDRAC_HOST/redfish/v1/AccountService/Accounts"
+    "https://$IDRAC_HOST/redfish/v1/Managers/iDRAC.Embedded.1/Accounts"
+  )
+  
+  for endpoint in "${endpoints[@]}"; do
+    for payload in "${user_payloads[@]}"; do
+      echo "Trying endpoint: $endpoint"
+      local response_code
+      local response_body
+      response_code=$(curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
+        -H "Content-Type: application/json" \
+        -X POST "$endpoint" \
+        -d "$payload" -o /dev/null -w "%{http_code}" 2>/dev/null)
+      
+      response_body=$(curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
+        -H "Content-Type: application/json" \
+        -X POST "$endpoint" \
+        -d "$payload" 2>/dev/null)
+      
+      echo "Response code: $response_code"
+      echo "Response body: $response_body"
+      
+      if echo "$response_code" | grep -qE '^(200|201|202|204)$'; then
+        echo "Admin user '$admin_user' created successfully"
+        echo "Updating credentials for fan control..."
+        IDRAC_USERNAME="$admin_user"
+        IDRAC_PASSWORD="$admin_pass"
+        return 0
+      fi
+    done
+  done
+  
+  echo "Failed to create admin user (tried multiple methods)"
+  echo "You may need to create the admin user manually in iDRAC web interface"
+  return 1
 }
 
 # Function to check if current user has fan control privileges
