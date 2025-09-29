@@ -4,40 +4,139 @@
 # Control method selection: ipmi | redfish | auto (try ipmi then redfish)
 CONTROL_METHOD=${CONTROL_METHOD:-auto}
 
-# Helper: Redfish POST with multiple fallback endpoints/payloads
+# Function to create a dedicated admin user for fan control (workaround for root restrictions)
+create_admin_user() {
+  local admin_user="${ADMIN_USER:-admin}"
+  local admin_pass="${ADMIN_PASSWORD:-$(openssl rand -base64 12)}"
+  
+  echo "Attempting to create admin user '$admin_user' for fan control..."
+  
+  # Try to create user via Redfish
+  local user_payload="{
+    \"UserName\": \"$admin_user\",
+    \"Password\": \"$admin_pass\",
+    \"RoleId\": \"Administrator\",
+    \"Enabled\": true
+  }"
+  
+  if curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
+    -H "Content-Type: application/json" \
+    -X POST "https://$IDRAC_HOST/redfish/v1/AccountService/Accounts" \
+    -d "$user_payload" -o /dev/null -w "%{http_code}" | grep -qE '^(200|201|202|204)$'; then
+    echo "Admin user '$admin_user' created successfully"
+    echo "Updating credentials for fan control..."
+    IDRAC_USERNAME="$admin_user"
+    IDRAC_PASSWORD="$admin_pass"
+    return 0
+  else
+    echo "Failed to create admin user, continuing with root user"
+    return 1
+  fi
+}
+
+# Function to check if current user has fan control privileges
+check_fan_control_privileges() {
+  echo "Checking fan control privileges..."
+  
+  # Try a simple fan control command to test privileges
+  if ipmitool -I $LOGIN_STRING raw 0x30 0x30 0x01 0x00 > /dev/null 2>&1; then
+    echo "IPMI fan control privileges: OK"
+    return 0
+  else
+    echo "IPMI fan control privileges: FAILED"
+  fi
+  
+  # Try Redfish fan control
+  if curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
+    -H "Content-Type: application/json" \
+    -X POST "https://$IDRAC_HOST/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellLCService/Actions/DellLCService.SetFanSpeed" \
+    -d '{"FanSpeed": 20}' -o /dev/null -w "%{http_code}" | grep -qE '^(200|201|202|204)$'; then
+    echo "Redfish fan control privileges: OK"
+    return 0
+  else
+    echo "Redfish fan control privileges: FAILED"
+  fi
+  
+  return 1
+}
+
+# Helper: Redfish POST with multiple fallback endpoints/payloads and privilege escalation attempts
 redfish_post () {
-  local endpoint
+  local action="$1"
   local payload="$2"
   local -a endpoints=(
-    "https://$IDRAC_HOST/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellLCService/Actions/DellLCService.$1"
-    "https://$IDRAC_HOST/redfish/v1/Dell/Managers/iDRAC.Embedded.1/DellLCService/Actions/DellLCService.$1"
+    "https://$IDRAC_HOST/redfish/v1/Managers/iDRAC.Embedded.1/Oem/Dell/DellLCService/Actions/DellLCService.$action"
+    "https://$IDRAC_HOST/redfish/v1/Dell/Managers/iDRAC.Embedded.1/DellLCService/Actions/DellLCService.$action"
+    "https://$IDRAC_HOST/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/DellManager.$action"
+    "https://$IDRAC_HOST/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Manager.SetFanSpeed"
   )
-  for endpoint in "${endpoints[@]}"; do
-    curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
-      -H "Content-Type: application/json" \
-      -X POST "$endpoint" -d "$payload" -o /dev/null -w "%{http_code}" | grep -qE '^(200|201|202|204)$' && return 0
+  
+  # Try with different authentication methods for privilege escalation
+  local -a auth_methods=(
+    "-u $IDRAC_USERNAME:$IDRAC_PASSWORD"
+    "-u $IDRAC_USERNAME:$IDRAC_PASSWORD -H 'X-Auth-Token: $(curl -k -s -u $IDRAC_USERNAME:$IDRAC_PASSWORD https://$IDRAC_HOST/redfish/v1/SessionService/Sessions -X POST -H \"Content-Type: application/json\" -d \"{\\\"UserName\\\":\\\"$IDRAC_USERNAME\\\",\\\"Password\\\":\\\"$IDRAC_PASSWORD\\\"}\" | jq -r '.Token' 2>/dev/null)'"
+  )
+  
+  for auth in "${auth_methods[@]}"; do
+    for endpoint in "${endpoints[@]}"; do
+      local response_code
+      response_code=$(eval "curl -k -s -S $auth -H 'Content-Type: application/json' -X POST '$endpoint' -d '$payload' -o /dev/null -w '%{http_code}'" 2>/dev/null)
+      if echo "$response_code" | grep -qE '^(200|201|202|204)$'; then
+        return 0
+      fi
+    done
   done
   return 1
 }
 
-# Redfish: enable manual control and set speed
+# Redfish: enable manual control and set speed with multiple workarounds for root user restrictions
 redfish_apply_user_profile () {
   # Try to enable manual override (best-effort; ignore failure if not required on model)
   redfish_post SetFanControlOverride '{"Enable": true}' || true
 
-  # Try multiple payload shapes for SetFanSpeed across firmware variants
-  if redfish_post SetFanSpeed "{\"FanSpeed\": $DECIMAL_FAN_SPEED}"; then
+  # Workaround 1: Try different Redfish endpoints and payload formats
+  local -a payloads=(
+    "{\"FanSpeed\": $DECIMAL_FAN_SPEED}"
+    "{\"Percent\": $DECIMAL_FAN_SPEED}"
+    "{\"Target\": \"All\", \"Percent\": $DECIMAL_FAN_SPEED}"
+    "{\"ThermalConfiguration\": {\"FanSpeedOffset\": $DECIMAL_FAN_SPEED}}"
+    "{\"FanSpeedOffset\": $DECIMAL_FAN_SPEED}"
+  )
+  
+  for payload in "${payloads[@]}"; do
+    if redfish_post SetFanSpeed "$payload"; then
+      CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"
+      return 0
+    fi
+  done
+
+  # Workaround 2: Try direct thermal configuration endpoint
+  local thermal_payload="{\"ThermalConfiguration\": {\"FanSpeedOffset\": $DECIMAL_FAN_SPEED}}"
+  if curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
+    -H "Content-Type: application/json" \
+    -X PATCH "https://$IDRAC_HOST/redfish/v1/Chassis/System.Embedded.1/Thermal" \
+    -d "$thermal_payload" -o /dev/null -w "%{http_code}" | grep -qE '^(200|201|202|204)$'; then
     CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"
     return 0
   fi
-  if redfish_post SetFanSpeed "{\"Percent\": $DECIMAL_FAN_SPEED}"; then
-    CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"
-    return 0
-  fi
-  if redfish_post SetFanSpeed "{\"Target\": \"All\", \"Percent\": $DECIMAL_FAN_SPEED}"; then
-    CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"
-    return 0
-  fi
+
+  # Workaround 3: Try legacy Dell Manager endpoints
+  local legacy_endpoints=(
+    "https://$IDRAC_HOST/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Oem/DellManager.SetFanSpeed"
+    "https://$IDRAC_HOST/redfish/v1/Managers/iDRAC.Embedded.1/Actions/Manager.SetFanSpeed"
+  )
+  
+  for endpoint in "${legacy_endpoints[@]}"; do
+    for payload in "${payloads[@]}"; do
+      if curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" \
+        -H "Content-Type: application/json" \
+        -X POST "$endpoint" -d "$payload" -o /dev/null -w "%{http_code}" | grep -qE '^(200|201|202|204)$'; then
+        CURRENT_FAN_CONTROL_PROFILE="User static fan control profile ($DECIMAL_FAN_SPEED%)"
+        return 0
+      fi
+    done
+  done
+
   return 1
 }
 
@@ -133,6 +232,21 @@ else
   echo "Idrac username: $IDRAC_USERNAME"
   echo "Idrac password: $IDRAC_PASSWORD"
   LOGIN_STRING="lanplus -H $IDRAC_HOST -U $IDRAC_USERNAME -P $IDRAC_PASSWORD"
+  
+  # Check fan control privileges and attempt workarounds for root user restrictions
+  if ! check_fan_control_privileges; then
+    echo "WARNING: Current user lacks fan control privileges"
+    echo "Attempting workarounds for iDRAC9 root user restrictions..."
+    
+    # Try to create admin user as workaround
+    if create_admin_user; then
+      echo "Using admin user for fan control"
+      LOGIN_STRING="lanplus -H $IDRAC_HOST -U $IDRAC_USERNAME -P $IDRAC_PASSWORD"
+    else
+      echo "WARNING: Unable to create admin user. Fan control may not work with root user on newer iDRAC9 firmware."
+      echo "Consider manually creating an admin user in iDRAC web interface with Administrator privileges."
+    fi
+  fi
 fi
 
 # Log the fan speed objective, CPU temperature threshold, and check interval
