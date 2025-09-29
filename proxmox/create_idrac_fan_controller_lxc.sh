@@ -90,8 +90,8 @@ prompt_var() {
   local prompt_text=$1; shift
   local default_value=${1:-}
   local input=""
-  # If variable is already set and non-empty, do nothing
-  if [[ -n "${!var_name+x}" && -n "${!var_name}" ]]; then
+  # If variable is already set and non-empty, do nothing (set -u safe)
+  if [[ "${!var_name+x}" == "x" && -n "${!var_name-}" ]]; then
     return 0
   fi
   if [[ -n "$default_value" ]]; then
@@ -107,8 +107,8 @@ prompt_secret() {
   local var_name=$1; shift
   local prompt_text=$1; shift
   local input=""
-  # If variable is already set and non-empty, do nothing
-  if [[ -n "${!var_name+x}" && -n "${!var_name}" ]]; then
+  # If variable is already set and non-empty, do nothing (set -u safe)
+  if [[ "${!var_name+x}" == "x" && -n "${!var_name-}" ]]; then
     return 0
   fi
   read_with_prompt input "$prompt_text: " 1
@@ -116,13 +116,14 @@ prompt_secret() {
 }
 
 maybe_test_redfish() {
+  local host="$1" user="$2" pass="$3"
   local answer
   echo "Redfish is recommended for iDRAC9 v7.00+. We'll test connectivity with HTTPS:443 using current credentials."
   read_with_prompt answer "Test Redfish connectivity now? [y/N]: " 0
   case "$answer" in
     y|Y)
-      echo "Testing Redfish: https://$IDRAC_HOST/redfish/v1/ (self-signed allowed)"
-      if curl -k -s -S -u "$IDRAC_USERNAME:$IDRAC_PASSWORD" -o /dev/null -w "%{http_code}\n" "https://$IDRAC_HOST/redfish/v1/" | grep -qE '^(200|201|202|204)$'; then
+      echo "Testing Redfish: https://$host/redfish/v1/ (self-signed allowed)"
+      if curl -k -s -S -u "$user:$pass" -o /dev/null -w "%{http_code}\n" "https://$host/redfish/v1/" | grep -qE '^(200|201|202|204)$'; then
         echo "Redfish reachable."
       else
         echo "WARNING: Redfish not reachable or credentials invalid. You can continue; IPMI may still work or fix connectivity."
@@ -294,7 +295,7 @@ main() {
     *) CONTROL_METHOD=auto ;;
   esac
   if [[ "$CONTROL_METHOD" == "redfish" || "$CONTROL_METHOD" == "auto" ]]; then
-    maybe_test_redfish
+    maybe_test_redfish "$IDRAC_HOST" "$IDRAC_USERNAME" "$IDRAC_PASSWORD"
   fi
 
   prompt_var FAN_SPEED "Fan speed percentage (0-100)" "20"
